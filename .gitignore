@@ -1,3 +1,4 @@
 .env
 .idea/
 __pycach__/
+src/__pycach__/
