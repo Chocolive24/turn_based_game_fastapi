@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from peewee import *
 
@@ -19,7 +19,8 @@ class PsqlModel(Model):
 
 
 class PlayerModel(PsqlModel):
-    name = CharField()
+    name = CharField(primary_key=True)
+    elo = IntegerField()
 
 
 class GameModel(PsqlModel):
@@ -32,7 +33,12 @@ with psql_db:  # connect
 
 
 class Player(BaseModel):
-    name: str
+    name: str = PrimaryKeyField()
+    elo: int
+
+
+class EloGain(BaseModel):
+    gain: int
 
 
 class Game(BaseModel):
@@ -51,8 +57,24 @@ async def say_hello(name: str):
 
 @app.get("/players")
 async def get_players():
-    players = list(PlayerModel.select().dicts())
+    players = list(PlayerModel.select(PlayerModel.name, PlayerModel.elo).dicts())
     return players
+
+
+@app.get("/player/{name}")
+async def get_player(name: str):
+    player = list(PlayerModel.select(PlayerModel.name, PlayerModel.elo).where(PlayerModel.name == name).dicts())
+    if not player:
+        raise HTTPException(status_code=404, detail=f"No player named : {name}")
+    return player
+
+
+@app.get("/player/{name}/elo")
+async def get_player(name: str):
+    player = list(PlayerModel.select(PlayerModel.elo).where(PlayerModel.name == name).dicts())
+    if not player:
+        raise HTTPException(status_code=404, detail=f"No player named : {name}")
+    return player
 
 
 @app.get("/games")
@@ -61,10 +83,17 @@ async def get_games():
     return games
 
 
-@app.post("/players")
+@app.post("/player")
 async def create_player(player: Player):
-    new_player = PlayerModel.create(name=player.name)
-    return {"message": f"successfully created player : {new_player.name}"}
+    # Check if the player already exists
+    try:
+        existing_player = PlayerModel.get(PlayerModel.name == player.name)
+        # If player already exists, return a message indicating the same
+        return {"message": f"Player {existing_player.name} already exists."}
+    except PlayerModel.DoesNotExist:
+        # If player doesn't exist, create a new one
+        new_player = PlayerModel.create(name=player.name, elo=player.elo)
+        return {"message": f"Successfully created player: {new_player.name}"}
 
 
 @app.post("/games")
@@ -72,6 +101,17 @@ async def create_game(game: Game):
     new_game = GameModel.create(name=game.name)
     print("post a new game : ", game)
     return {"message": f"successfully created a new game : {new_game.name}"}
+
+
+@app.post("/player/{name}")
+async def update_player_elo(name: str, elo_gain: EloGain):
+    try:
+        player = PlayerModel.get(PlayerModel.name == name)
+        player.elo += elo_gain.gain
+        player.save()
+        return {"message": f"ELO for player {name} updated successfully"}
+    except PlayerModel.DoesNotExist:
+        raise HTTPException(status_code=404, detail=f"No player named: {name}")
 
 
 @app.middleware("http")
